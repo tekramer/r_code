@@ -1,0 +1,150 @@
+coords2country = function(points)
+{  
+  countriesSP <- getMap(resolution='low')
+  pointsSP = SpatialPoints(points, proj4string=CRS(proj4string(countriesSP)))  
+  indices = over(pointsSP, countriesSP)
+  indices$ADMIN  
+}
+
+###Install necessary packages (first time only)
+install.packages("psych")
+install.packages("car")
+install.packages("rworldmap")
+
+###Change to your working directory
+setwd ("C:/Users/kimnimon/Desktop/KNIMON/WINWORD6/UTTyler/HRD Multivariate/HRD 6355.001/EWPAcsv")
+setwd ("P:\\HRD Multivariate\\HRD 6355.001\\EWPAcsv")
+
+###Load libraries
+library(foreign, pos=4)
+library(psych)
+library(car)
+
+###Read in dataset (one version with coded values and the other as choice text)
+dso1 <- 
+  read.csv("EWPAPrepCleanCodedValues.csv",
+   header=TRUE, sep=",", na.strings="NA", dec=".", strip.white=TRUE)
+dso2 <- 
+  read.csv("EWPAPrepCleanChoiceText.csv",
+   header=TRUE, sep=",", na.strings=c("NA",""), dec=".",strip.white=TRUE)
+
+###Look at dataset and column ids
+head(dso2)
+names(dso2)
+
+###Create dataset with coded values
+ds<-dso1
+
+###Ovewrite demographics with data from choice text file
+ds[,c(3,33:35)]<-dso2[,c(3,33:35)]
+ds[,c("Status","Gender","Eth","Race")]<-dso2[,c("Status","Gender","Eth","Race")]
+
+###Change names of columns
+names(ds)[6]<-c("Time")
+names(ds)[c(20:24,28:32)]<-c("IP1","IP2","IP3","IP4","IP5","AU1","AU2","AU3","AU4","AU5")
+names(ds)[c(25,26)]<-c("IMC1","IMC2")
+
+###See total responses
+nrow(ds)
+
+###Hand edit dataset to create incompleter
+#ds<-edit(ds)
+
+###Initialize delete variable
+ds$Delete<-"Keep"
+
+###Create country
+points = na.omit(data.frame(lon=ds$LocationLongitude, lat=ds$LocationLatitude))
+ct<-coords2country(points)
+ds$Country<-NA
+ds$Country<-factor(ds$Country,levels=levels(ct))
+ds$Country[as.numeric(as.character(rownames(points)))]<-ct
+ds$Country<-factor(ds$Country)
+
+###Flag responses from countries other than US or response with no country information
+table(ds$Delete,ds$Country,useNA="ifany")
+ds$Delete[(ds$Delete=="Keep") & (is.na(ds$Country)| (ds$Country!="United States of America"))]<-"Country"
+table(ds$Delete)
+
+###Flag responses from BOTs
+table(ds$Delete,ds$Bot,useNA="ifany")
+ds$Delete[(ds$Delete=="Keep") & (ds$Bot!=4)]<-"BOT"
+table(ds$Delete)
+
+###Flag responses that did not consent
+table(ds$Delete,ds$Consent,useNA="ifany")
+ds$Delete[(ds$Delete=="Keep") & (is.na(ds$Consent)| (ds$Consent!=1))]<-"Consent"
+table(ds$Delete)
+
+###Flag responses that did not pass IMC1
+table(ds$Delete,ds$IMC1,useNA="ifany")
+ds$Delete[(ds$Delete=="Keep") & !is.na(ds$IMC1)]<-"IMC1"
+table(ds$Delete)
+
+###Flag responses that did not pass IMC2
+table(ds$Delete,ds$IMC2,useNA="ifany")
+ds$Delete[(ds$Delete=="Keep") & is.na(ds$IMC2)]<-"IMC2"
+table(ds$Delete)
+
+###Flag previews
+table(ds$Delete,ds$Status)
+ds$Delete[(ds$Delete=="Keep")&(ds$Status!="IP Address")]<-"Preview"
+table(ds$Delete)
+
+###Flag incompleters
+table(ds$Delete,ds$Finished)
+ds$Delete[(ds$Delete=="Keep")&(ds$Finished==0)]<-"Incomplete"
+table(ds$Delete)
+
+###Change time from seconds to minutes
+ds$Time<-ds$Time/60
+hist(ds$Time)
+describe(ds$Time)
+
+###Flag duration <1 minutes > 60 minutes
+ds$Delete[(ds$Delete=="Keep")&((ds$Time<1) | (ds$Time>60))]<-"Time"
+table(ds$Delete)
+
+###Create variable that shows standard deviation of how people responded to the DV items
+ds$sd<- apply(subset(ds,select=c(IP1:IP5,AU1:AU5)),1,sd)
+
+###Flag straight lined responses
+ds$Delete[(ds$Delete=="Keep") & (ds$sd==0)]<-"Straightline"
+table(ds$Delete)
+
+###Write dataset out that can be used to assist determining MTurk payment
+write.csv(ds,"EWPAOrig.csv",row.names=FALSE)
+
+###Omit unusable responses
+ds<-subset(ds,Delete=="Keep")
+nrow(ds)
+
+###Omit IP Addresses
+ds<-subset(ds,select=-c(IPAddress))
+head(ds)
+
+describe(ds)
+
+###Omit fields with valid missing data and fields not needed
+ds<-subset(ds,select=-c(RecipientLastName,RecipientFirstName,RecipientEmail,ExternalReference,IMC1,IMC2,Q21,Delete,sd))
+
+###Retain complete response sets
+ds<-na.omit(ds)
+nrow(ds)
+
+###Recode any negatively worded items
+ds$AU1r<-recode(ds$AU1,'1=6; 2=5; 3=4; 4=3; 5=2; 6=1')
+
+describe(subset(ds,select=c(AU1r,IP1:IP5,AU1:AU5)))
+
+table(ds$Gender)
+table(ds$Gender)/nrow(ds)
+
+table(ds$Race)
+table(ds$Race)/nrow(ds)
+
+table(ds$Eth)
+table(ds$Eth)/nrow(ds)
+
+write.csv(ds,"EWPAClean.csv",row.names=FALSE)
+
